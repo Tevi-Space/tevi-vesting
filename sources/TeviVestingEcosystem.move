@@ -1,3 +1,25 @@
+/**
+@title Tevi Ecosystem Vesting Contract
+@dev Token vesting for ecosystem development allocations
+
+This module implements a specialized vesting schedule for Tevi ecosystem
+allocations with the following parameters:
+- 3 month cliff period: No tokens are claimable during this period
+- 0% TGE release: No tokens released at Token Generation Event  
+- 60 month linear vesting: Remaining tokens vest linearly over 5 years
+
+The ecosystem vesting is designed for longer-term ecosystem development
+initiatives and partnerships, with tokens releasing gradually over 5 years
+after the initial cliff period.
+
+Note: This contract is cloned from the base TeviVesting.move contract
+with the following customized parameters:
+- CLIFF_MONTHS = 3
+- TGE_BPS = 0 (0%)
+- LINEAR_VESTING_MONTHS = 60 (5 years)
+
+All core vesting functionality remains the same as the base implementation.
+**/
 module TeviVesting::Ecosystem {
     use std::error;
     use std::signer;

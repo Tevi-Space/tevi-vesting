@@ -1,3 +1,25 @@
+/**
+@title Tevi Token Vesting Contract
+@dev A flexible token vesting system for the Tevi ecosystem on Aptos
+
+This module implements a configurable vesting contract for TeviCoin that allows:
+- Token vesting with customizable schedules
+- Initial token release at TGE (Token Generation Event)
+- Cliff period before linear vesting begins
+- Linear vesting over a specified period
+- Batch whitelisting of users with individual allocation amounts
+- Secure token claiming by whitelisted users
+- Admin controls for depositing tokens and starting the vesting process
+
+The vesting schedule consists of:
+1. Initial release: Optional percentage of tokens released at TGE (basis points)
+2. Cliff period: Time period (in months) during which no additional tokens vest
+3. Linear vesting: Period (in months) during which remaining tokens vest linearly
+
+Users can only claim tokens according to the vesting schedule, and
+the admin must whitelist users and deposit sufficient tokens before
+the vesting can be started.
+**/
 module TeviVesting::Base {
     use std::error;
     use std::signer;

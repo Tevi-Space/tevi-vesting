@@ -1,3 +1,26 @@
+/**
+@title Tevi Seed and Angel Investor Vesting Contract
+@dev Token vesting for seed and angel investor allocations
+
+This module implements a specialized vesting schedule for Tevi seed and angel 
+investor allocations with the following parameters:
+- 6 month cliff period: No tokens are claimable during this period after TGE release
+- 10% TGE release: 10% of tokens are released immediately at Token Generation Event
+- 36 month linear vesting: Remaining tokens vest linearly over 3 years
+
+The seed and angel investor vesting features a longer 6-month cliff compared to
+private investors, reflecting their earlier entry and deeper commitment to the project.
+The schedule includes an initial 10% release at TGE followed by a 3-year linear
+vesting period to align early investor interests with long-term project success.
+
+Note: This contract is cloned from the base TeviVesting.move contract
+with the following customized parameters:
+- CLIFF_MONTHS = 6
+- TGE_BPS = 1000 (10%)
+- LINEAR_VESTING_MONTHS = 36 (3 years)
+
+All core vesting functionality remains the same as the base implementation.
+**/
 module TeviVesting::SeedAndAngle {
     use std::error;
     use std::signer;

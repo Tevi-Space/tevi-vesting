@@ -1,3 +1,26 @@
+/**
+@title Tevi Private Investor Vesting Contract
+@dev Token vesting for private investor allocations
+
+This module implements a specialized vesting schedule for Tevi private investor
+allocations with the following parameters:
+- 3 month cliff period: No tokens are claimable during this period after TGE release
+- 10% TGE release: 10% of tokens are released immediately at Token Generation Event
+- 36 month linear vesting: Remaining tokens vest linearly over 3 years
+
+The private investor vesting is designed to balance investor liquidity needs
+while ensuring long-term project alignment. It provides an initial 10% release
+with the remainder vesting over a 3-year period to encourage sustainable
+support for the project.
+
+Note: This contract is cloned from the base TeviVesting.move contract
+with the following customized parameters:
+- CLIFF_MONTHS = 3
+- TGE_BPS = 1000 (10%)
+- LINEAR_VESTING_MONTHS = 36 (3 years)
+
+All core vesting functionality remains the same as the base implementation.
+**/
 module TeviVesting::PrivateInvestor {
     use std::error;
     use std::signer;

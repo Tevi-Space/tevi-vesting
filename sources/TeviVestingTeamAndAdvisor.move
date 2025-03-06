@@ -1,3 +1,27 @@
+/**
+@title Tevi Team and Advisor Vesting Contract
+@dev Token vesting for team members and advisors
+
+This module implements a specialized vesting schedule for Tevi team members
+and advisors with the following parameters:
+- 6 month cliff period: No tokens are claimable during this initial period
+- 0% TGE release: No tokens released at Token Generation Event
+- 60 month linear vesting: Tokens vest linearly over 5 years
+
+The team and advisor vesting uses the longest vesting period (5 years) with
+a 6-month cliff and no initial release, ensuring maximum long-term alignment
+between the core team/advisors and the project's success. This conservative
+vesting approach demonstrates the team's commitment to the long-term vision
+and success of the Tevi ecosystem.
+
+Note: This contract is cloned from the base TeviVesting.move contract
+with the following customized parameters:
+- CLIFF_MONTHS = 6
+- TGE_BPS = 0 (0%)
+- LINEAR_VESTING_MONTHS = 60 (5 years)
+
+All core vesting functionality remains the same as the base implementation.
+**/
 module TeviVesting::TeamAndAdvisor {
     use std::error;
     use std::signer;

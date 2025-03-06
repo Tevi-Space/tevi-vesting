@@ -1,3 +1,25 @@
+/**
+@title Tevi Foundation Vesting Contract
+@dev Token vesting for foundation treasury allocations
+
+This module implements a specialized vesting schedule for Tevi foundation
+allocations with the following parameters:
+- 3 month cliff period: No tokens are claimable during this period
+- 0% TGE release: No tokens released at Token Generation Event
+- 60 month linear vesting: Remaining tokens vest linearly over 5 years
+
+The foundation vesting is designed for long-term project sustainability,
+enabling the foundation to gradually access funds for operations, development,
+grants, and other ecosystem-building activities over a 5-year period.
+
+Note: This contract is cloned from the base TeviVesting.move contract
+with the following customized parameters:
+- CLIFF_MONTHS = 3
+- TGE_BPS = 0 (0%)
+- LINEAR_VESTING_MONTHS = 60 (5 years)
+
+All core vesting functionality remains the same as the base implementation.
+**/
 module TeviVesting::Foundation {
     use std::error;
     use std::signer;
