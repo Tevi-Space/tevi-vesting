@@ -27,17 +27,17 @@ aptos move compile --named-addresses TeviCoin=tevi-developer
 
 2. Compile `TeviVesting`
 ```
-aptos move compile --named-addresses TeviCoin=tevi-developer,TeviVesting=tevi-developer
+aptos move compile --named-addresses TeviCoin=tevi-developer,TeviVesting=tevi-developer,TeviWallet=tevi-developer
 ```
 
 3. Test `TeviVesting`
 ```
-aptos move test --named-addresses TeviCoin=tevi-developer,TeviVesting=tevi-developer
+aptos move test --named-addresses TeviCoin=tevi-developer,TeviVesting=tevi-developer,TeviWallet=tevi-developer
 ```
 
 4. Deploy `TeviVesting`
 ```
-aptos move publish --named-addresses TeviCoin=tevi-developer,TeviVesting=tevi-developer --profile tevi-developer
+aptos move publish --named-addresses TeviCoin=tevi-developer,TeviVesting=tevi-developer,TeviWallet=tevi-developer --profile tevi-developer
 ```
 
 ## Initialize Vesting Contracts
