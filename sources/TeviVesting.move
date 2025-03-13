@@ -1,8 +1,8 @@
 /**
 @title Tevi Token Vesting Contract
-@dev A flexible token vesting system for the Tevi ecosystem on Aptos
+@dev A flexible token vesting system for any fungible asset on Aptos
 
-This module implements a configurable vesting contract for TeviCoin that allows:
+This module implements a configurable vesting contract that allows:
 - Token vesting with customizable schedules
 - Initial token release at TGE (Token Generation Event)
 - Cliff period before linear vesting begins
@@ -10,6 +10,7 @@ This module implements a configurable vesting contract for TeviCoin that allows:
 - Batch whitelisting of users with individual allocation amounts
 - Secure token claiming by whitelisted users
 - Admin controls for depositing tokens and starting the vesting process
+- Configurable asset type - can be used with any Aptos fungible asset
 
 The vesting schedule consists of:
 1. Initial release: Optional percentage of tokens released at TGE (basis points)
@@ -24,13 +25,16 @@ module TeviVesting::Base {
     use std::error;
     use std::signer;
     use std::vector;
-    use aptos_framework::timestamp;
-    use aptos_framework::account;
-    use aptos_framework::event::{Self, EventHandle};
-    use aptos_framework::primary_fungible_store;
-    use aptos_framework::object::{Self, ExtendRef};
-    use TeviCoin::TeviCoin;
     use std::simple_map::{Self, SimpleMap};
+    // use std::string;
+    // use aptos_std::debug;
+    
+    use aptos_framework::timestamp;
+    // use aptos_framework::event::{Self, EventHandle};
+    use aptos_framework::primary_fungible_store;
+    use aptos_framework::object::{Self, ExtendRef, Object};
+    use aptos_framework::fungible_asset::Metadata;
+    use std::option::{Self, Option};
 
     /// Errors
     const ENOT_ADMIN: u64 = 1;
@@ -43,9 +47,11 @@ module TeviVesting::Base {
     const EVESTING_ZERO_AMOUNT: u64 = 8;
     const EINSUFFICIENT_BALANCE: u64 = 9;
     const EVESTING_ALREADY_INITIALIZED: u64 = 10;
+    const EVESTING_ALREADY_STARTED: u64 = 11;
+    const EASSET_TYPE_NOT_CONFIGURED: u64 = 12;
 
     /// Constants for time calculations (in seconds)
-    const SECONDS_PER_MONTH: u64 = 2592000; // 30 days
+    const SECONDS_PER_MONTH: u64 = 2592000; // 30 days (default value)
     const VESTING_OBJECT_SEED: vector<u8> = b"TEVI_VESTING";
     const BASIS_POINTS_DENOMINATOR: u64 = 10000;
 
@@ -55,6 +61,7 @@ module TeviVesting::Base {
         tge_bps: u64, // Basis points (1/10000)
         linear_vesting_months: u64,
         start_timestamp: u64,
+        seconds_per_month: u64, // Added configurable seconds per month
     }
 
     /// User vesting information
@@ -66,82 +73,13 @@ module TeviVesting::Base {
 
     /// Main vesting contract storage
     struct VestingContract has key {
-        admin: address,
         schedule: VestingSchedule,
         whitelisted_users: SimpleMap<address, WhitelistedUser>,
         token_balance: u64,
         app_extend_ref: ExtendRef,
-        start_vesting: u64, // New flag to control vesting start
-        
-        // Events
-        whitelist_events: EventHandle<WhitelistEvent>,
-        claim_events: EventHandle<ClaimEvent>,
-        deposit_events: EventHandle<DepositEvent>,
-    }
-
-    /// Event emitted when a user is whitelisted
-    struct WhitelistEvent has drop, store {
-        user: address,
-        amount: u64,
-    }
-
-    /// Event emitted when tokens are claimed
-    struct ClaimEvent has drop, store {
-        user: address,
-        amount: u64,
-        timestamp: u64,
-    }
-
-    /// Event emitted when tokens are deposited
-    struct DepositEvent has drop, store {
-        amount: u64,
-        timestamp: u64,
-    }
-
-    /// Initialize the vesting contract
-    public fun initialize(admin: &signer, cliff_months: u64, tge_bps: u64, linear_vesting_months: u64) {
-        // Validate parameters
-        assert!(tge_bps <= BASIS_POINTS_DENOMINATOR, error::invalid_argument(EVESTING_SCHEDULE_INVALID));
-        assert!(cliff_months > 0, error::invalid_argument(EVESTING_SCHEDULE_INVALID));
-        assert!(linear_vesting_months > 0, error::invalid_argument(EVESTING_SCHEDULE_INVALID));
-
-        let admin_addr = signer::address_of(admin);
-        
-        // Create vesting object
-        let constructor_ref = object::create_named_object(
-            admin,
-            VESTING_OBJECT_SEED,
-        );
-        let extend_ref = object::generate_extend_ref(&constructor_ref);
-        let vesting_signer = &object::generate_signer(&constructor_ref);
-        
-        // Create vesting schedule
-        let schedule = VestingSchedule {
-            cliff_months,
-            tge_bps,
-            linear_vesting_months,
-            start_timestamp: timestamp::now_seconds(),
-        };
-
-        // Create vesting contract
-        move_to(vesting_signer, VestingContract {
-            admin: admin_addr,
-            schedule,
-            whitelisted_users: simple_map::create<address, WhitelistedUser>(),
-            token_balance: 0,
-            app_extend_ref: extend_ref,
-            start_vesting: 0, // Initialize start_vesting flag to 0
-            whitelist_events: account::new_event_handle<WhitelistEvent>(vesting_signer),
-            claim_events: account::new_event_handle<ClaimEvent>(vesting_signer),
-            deposit_events: account::new_event_handle<DepositEvent>(vesting_signer),
-        });
-
-        // Initialize primary store for contract
-        let metadata = TeviCoin::get_metadata();
-        primary_fungible_store::ensure_primary_store_exists(
-            signer::address_of(vesting_signer),
-            metadata
-        );
+        start_vesting: u64, // flag to control vesting start
+        asset_type: Option<Object<Metadata>>, // Asset to be used for vesting
+        is_asset_configured: bool, // Flag to indicate if asset has been configured
     }
 
     /// Get the signer for the vesting contract
@@ -156,33 +94,144 @@ module TeviVesting::Base {
         object::create_object_address(&@TeviVesting, VESTING_OBJECT_SEED)
     }
 
-    /// Deposit tokens into the vesting contract
-    public entry fun deposit_tokens(admin: &signer, amount: u64) acquires VestingContract {
+    /// Borrow the immutable reference of the vesting contract.
+    inline fun authorized_borrow_contract(
+        owner: &signer
+    ): &VestingContract acquires VestingContract {
+        let vesting_addr = get_vesting_address();
+        assert_is_admin(owner);
+        borrow_global<VestingContract>(vesting_addr)
+    }
+
+    /// Borrow the mutable reference of the vesting contract.
+    inline fun authorized_borrow_contract_mut(
+        owner: &signer
+    ): &mut VestingContract acquires VestingContract {
+        let vesting_addr = get_vesting_address();
+        assert_is_admin(owner);
+        borrow_global_mut<VestingContract>(vesting_addr)
+    }
+
+    /// Check if the signer is the admin and abort if not
+    fun assert_is_admin(admin: &signer) {
         let admin_addr = signer::address_of(admin);
         let vesting_addr = get_vesting_address();
-        let vesting = borrow_global_mut<VestingContract>(vesting_addr);
         
-        assert!(admin_addr == vesting.admin, error::permission_denied(ENOT_ADMIN));
-        assert!(amount > 0, error::invalid_argument(EVESTING_ZERO_AMOUNT));
+        // Use object ownership to check admin privileges instead of a stored admin field
+        assert!(object::is_owner(object::address_to_object<VestingContract>(vesting_addr), admin_addr), 
+            error::permission_denied(ENOT_ADMIN));
+        // debug::print(&string::utf8(b"assert_is_admin"));
+    }
 
-        // Get TeviCoin metadata and transfer tokens
-        let metadata = TeviCoin::get_metadata();
+    /// Initialize the vesting contract on module publish
+    fun init_module(admin: &signer) {
+        // Create the vesting object using the compatible function with get_vesting_address
+        let constructor_ref = &object::create_named_object(admin, VESTING_OBJECT_SEED);
+        let extend_ref = object::generate_extend_ref(constructor_ref);
+        
+        // Get the vesting signer
+        let vesting_signer = object::generate_signer(constructor_ref);
+        // Initialize the VestingContract with default values
+        let default_schedule = VestingSchedule {
+            cliff_months: 0,
+            tge_bps: 0,
+            linear_vesting_months: 0,
+            start_timestamp: 0,
+            seconds_per_month: SECONDS_PER_MONTH, // Use the default value
+        };
+        
+        // Create an empty SimpleMap for whitelisted users
+        let whitelisted_users = simple_map::create<address, WhitelistedUser>();
+        
+        // Initialize the VestingContract struct and move it to the vesting object's address
+        move_to(&vesting_signer, VestingContract {
+            schedule: default_schedule,
+            whitelisted_users: whitelisted_users,
+            token_balance: 0,
+            app_extend_ref: extend_ref,
+            start_vesting: 0,
+            asset_type: option::none(),
+            is_asset_configured: false,
+        });
+    }
+
+    /// Configure vesting parameters
+    public entry fun configure_vesting(
+        admin: &signer, 
+        cliff_months: u64, 
+        tge_bps: u64, 
+        linear_vesting_months: u64,
+        asset_type: address,
+        start_timestamp: u64,
+        seconds_per_month: u64,
+    ) acquires VestingContract {
+        let vesting_signer = get_vesting_signer();
+        let vesting = authorized_borrow_contract_mut(admin);
+        
+        // Validate state
+        assert!(vesting.start_vesting == 0, error::invalid_state(EVESTING_ALREADY_STARTED));
+        
+        // Validate parameters
+        assert!(tge_bps <= BASIS_POINTS_DENOMINATOR, error::invalid_argument(EVESTING_SCHEDULE_INVALID));
+        assert!(cliff_months > 0, error::invalid_argument(EVESTING_SCHEDULE_INVALID));
+        assert!(linear_vesting_months > 0, error::invalid_argument(EVESTING_SCHEDULE_INVALID));
+        assert!(seconds_per_month > 0, error::invalid_argument(EVESTING_SCHEDULE_INVALID));
+        assert!(start_timestamp > 0, error::invalid_argument(EVESTING_SCHEDULE_INVALID));
+
+        // Update schedule
+        vesting.schedule = VestingSchedule {
+            cliff_months,
+            tge_bps,
+            linear_vesting_months,
+            start_timestamp,
+            seconds_per_month,
+        };
+
+        // Update asset type
+        let new_asset_type = object::address_to_object<Metadata>(asset_type);
+        vesting.asset_type = option::some(new_asset_type);
+        vesting.is_asset_configured = true;
+
+        // Ensure primary store exists for the new asset type
+        primary_fungible_store::ensure_primary_store_exists(
+            signer::address_of(&vesting_signer),
+            new_asset_type
+        );
+    }
+
+    /// Returns the active asset metadata object
+    fun get_asset_metadata(): Object<Metadata> acquires VestingContract {
+        let vesting_addr = get_vesting_address();
+        let vesting = borrow_global<VestingContract>(vesting_addr);
+        assert!(vesting.is_asset_configured, error::not_found(EASSET_TYPE_NOT_CONFIGURED));
+        *option::borrow(&vesting.asset_type)
+    }
+
+    /// Deposit tokens into the vesting contract
+    public entry fun deposit_tokens(admin: &signer, amount: u64) acquires VestingContract {
+        // Use authorized_borrow_contract_mut instead of assert_is_admin
+        let vesting = authorized_borrow_contract_mut(admin);
+        let vesting_addr = get_vesting_address();
+        
+        assert!(amount > 0, error::invalid_argument(EVESTING_ZERO_AMOUNT));
+        assert!(vesting.is_asset_configured, error::not_found(EASSET_TYPE_NOT_CONFIGURED));
+
+        // Get asset metadata and transfer tokens
+        let metadata = *option::borrow(&vesting.asset_type);
         primary_fungible_store::transfer(admin, metadata, vesting_addr, amount);
         vesting.token_balance = vesting.token_balance + amount;
-
-        event::emit_event(&mut vesting.deposit_events, DepositEvent {
-            amount,
-            timestamp: timestamp::now_seconds(),
-        });
     }
 
     /// Function to start vesting by setting the start_vesting flag
     public entry fun start_vesting(admin: &signer) acquires VestingContract {
-        let admin_addr = signer::address_of(admin);
-        let vesting_addr = get_vesting_address();
-        let vesting = borrow_global_mut<VestingContract>(vesting_addr);
+        let vesting = authorized_borrow_contract_mut(admin);
+        // Ensure vesting has not started
+        assert!(vesting.start_vesting == 0, error::invalid_state(EVESTING_ALREADY_STARTED));
+        assert!(vesting.is_asset_configured, error::not_found(EASSET_TYPE_NOT_CONFIGURED));
         
-        assert!(admin_addr == vesting.admin, error::permission_denied(ENOT_ADMIN));
+        // Check if contract has enough balance
+        let total_whitelisted = get_total_whitelisted_amount(vesting);
+        assert!(vesting.token_balance >= total_whitelisted, error::invalid_state(EINSUFFICIENT_BALANCE));
         vesting.start_vesting = 1;
     }
 
@@ -192,37 +241,15 @@ module TeviVesting::Base {
         users: vector<address>,
         amounts: vector<u64>,
     ) acquires VestingContract {
-        let admin_addr = signer::address_of(admin);
-        let vesting_addr = get_vesting_address();
-        let vesting = borrow_global_mut<VestingContract>(vesting_addr);
-        
-        // Validate admin permission
-        assert!(admin_addr == vesting.admin, error::permission_denied(ENOT_ADMIN));
-        
-        // Ensure vesting has not started
-        assert!(vesting.start_vesting == 0, error::invalid_state(EVESTING_ALREADY_INITIALIZED));
-        
+        let vesting = authorized_borrow_contract_mut(admin);
+
         // Validate vectors have same length
         let users_len = vector::length(&users);
         assert!(users_len == vector::length(&amounts), error::invalid_argument(EVESTING_SCHEDULE_INVALID));
-        
-        // Calculate total amount to be whitelisted
-        let i = 0;
-        let total_new_amount = 0u64;
-        while (i < users_len) {
-            let amount = *vector::borrow(&amounts, i);
-            assert!(amount > 0, error::invalid_argument(EVESTING_ZERO_AMOUNT));
-            total_new_amount = total_new_amount + amount;
-            i = i + 1;
-        };
-        
-        // Check if contract has enough balance
-        let total_whitelisted = get_total_whitelisted_amount(vesting) + total_new_amount;
-        assert!(vesting.token_balance >= total_whitelisted, error::invalid_state(EINSUFFICIENT_BALANCE));
 
         // Process all users
-        let metadata = TeviCoin::get_metadata();
-        i = 0;
+        let metadata = *option::borrow(&vesting.asset_type);
+        let i = 0;
         while (i < users_len) {
             let user = *vector::borrow(&users, i);
             let amount = *vector::borrow(&amounts, i);
@@ -241,12 +268,6 @@ module TeviVesting::Base {
 
             // Ensure user has primary store
             primary_fungible_store::ensure_primary_store_exists(user, metadata);
-
-            event::emit_event(&mut vesting.whitelist_events, WhitelistEvent {
-                user,
-                amount,
-            });
-
             i = i + 1;
         };
     }
@@ -254,13 +275,18 @@ module TeviVesting::Base {
     /// Claim vested tokens
     public entry fun claim(user: &signer) acquires VestingContract {
         let user_addr = signer::address_of(user);
-        let vesting_signer = get_vesting_signer();
         let vesting_addr = get_vesting_address();
-        let vesting = borrow_global_mut<VestingContract>(vesting_addr);
         
-        assert!(simple_map::contains_key(&vesting.whitelisted_users, &user_addr), 
-            error::permission_denied(ENOT_WHITELISTED));
-
+        {
+            let vesting = borrow_global<VestingContract>(vesting_addr);
+            assert!(vesting.is_asset_configured, error::not_found(EASSET_TYPE_NOT_CONFIGURED));
+            assert!(simple_map::contains_key(&vesting.whitelisted_users, &user_addr), 
+                error::permission_denied(ENOT_WHITELISTED));
+        };
+        
+        let vesting_signer = get_vesting_signer();
+        
+        let vesting = borrow_global_mut<VestingContract>(vesting_addr);
         let user_info = simple_map::borrow_mut(&mut vesting.whitelisted_users, &user_addr);
         let current_time = timestamp::now_seconds();
         let schedule_copy = vesting.schedule;
@@ -278,21 +304,16 @@ module TeviVesting::Base {
         user_info.claimed_amount = user_info.claimed_amount + claimable;
         user_info.last_claim_timestamp = current_time;
         vesting.token_balance = vesting.token_balance - claimable;
-
-        // Transfer tokens
-        let metadata = TeviCoin::get_metadata();
+        
+        let metadata = *option::borrow(&vesting.asset_type);
+        
+        // Transfer tokens using primary_fungible_store::transfer directly
         primary_fungible_store::transfer(
             &vesting_signer,
             metadata,
             user_addr,
             claimable
         );
-
-        event::emit_event(&mut vesting.claim_events, ClaimEvent {
-            user: user_addr,
-            amount: claimable,
-            timestamp: current_time,
-        });
     }
 
     /// Calculate the amount of tokens that can be claimed
@@ -302,8 +323,12 @@ module TeviVesting::Base {
         claimed_amount: u64,
         current_time: u64,
     ): u64 {
+        if (schedule.start_timestamp == 0 || current_time < schedule.start_timestamp) {
+            return 0
+        };
+
         let time_passed = current_time - schedule.start_timestamp;
-        let months_passed = time_passed / SECONDS_PER_MONTH;
+        let months_passed = time_passed / schedule.seconds_per_month; // Use the configurable seconds_per_month
 
         // Check if cliff period has passed
         if (months_passed < schedule.cliff_months) {
@@ -344,23 +369,67 @@ module TeviVesting::Base {
     }
 
     #[view]
-    public fun get_vesting_info(user: address): (u64, u64, u64) acquires VestingContract {
+    public fun get_vesting_info(user: address): (u64, u64, u64, u64) acquires VestingContract {
         let vesting_addr = get_vesting_address();
         let vesting = borrow_global<VestingContract>(vesting_addr);
-        if (!simple_map::contains_key(&vesting.whitelisted_users, &user)) {
-            return (0, 0, 0)
+        if (!vesting.is_asset_configured || !simple_map::contains_key(&vesting.whitelisted_users, &user)) {
+            return (0, 0, 0, 0)
         };
         
         let user_info = simple_map::borrow(&vesting.whitelisted_users, &user);
         let schedule_copy = vesting.schedule;
+        let current_time = timestamp::now_seconds();
         let claimable = calculate_claimable_amount(
             schedule_copy,
             user_info.total_amount,
             user_info.claimed_amount,
-            timestamp::now_seconds()
+            current_time
         );
         
-        (user_info.total_amount, user_info.claimed_amount, claimable)
+        (user_info.total_amount, user_info.claimed_amount, claimable, user_info.last_claim_timestamp)
+    }
+
+    #[view]
+    public fun get_next_unlock_time(): u64 acquires VestingContract {
+        let vesting_addr = get_vesting_address();
+        let vesting = borrow_global<VestingContract>(vesting_addr);
+        
+        // Return 0 if vesting is not configured
+        if (!vesting.is_asset_configured) {
+            return 0
+        };
+        
+        // Return 0 if vesting has not started
+        if (vesting.start_vesting == 0) {
+            return 0
+        };
+        
+        let schedule = vesting.schedule;
+        let current_time = timestamp::now_seconds();
+        let first_unlock_time = schedule.start_timestamp + (schedule.cliff_months * schedule.seconds_per_month);
+
+        if (current_time < first_unlock_time) {
+            return first_unlock_time
+        };
+        
+        // Calculate time passed since vesting started
+        let time_passed = current_time - schedule.start_timestamp;
+        let months_passed = time_passed / schedule.seconds_per_month;
+        
+        // If we're before the cliff, next unlock is at cliff end
+        if (months_passed < schedule.cliff_months) {
+            return first_unlock_time
+        };
+        
+        // If we've passed the cliff but are still in the linear vesting period
+        if (months_passed < schedule.cliff_months + schedule.linear_vesting_months) {
+            // Calculate the next month's unlock time
+            let next_month = months_passed + 1;
+            return schedule.start_timestamp + (next_month * schedule.seconds_per_month)
+        };
+        
+        // If we've passed the entire vesting period, there's no next unlock
+        return 0
     }
 
     #[view]
@@ -378,26 +447,74 @@ module TeviVesting::Base {
     }
 
     #[view]
-    public fun get_schedule_cliff_months(): u64 acquires VestingContract {
-        let schedule = get_vesting_schedule();
-        schedule.cliff_months
+    public fun get_vesting_config(): (u64, u64, u64, address, bool, bool, u64) acquires VestingContract {
+        let vesting_addr = get_vesting_address();
+        let vesting = borrow_global<VestingContract>(vesting_addr);
+        let asset_address = if (vesting.is_asset_configured) {
+            object::object_address(option::borrow(&vesting.asset_type))
+        } else {
+            @0x0
+        };
+        
+        (
+            vesting.schedule.cliff_months,
+            vesting.schedule.tge_bps,
+            vesting.schedule.linear_vesting_months,
+            asset_address,
+            vesting.is_asset_configured,
+            vesting.start_vesting == 1,
+            vesting.schedule.seconds_per_month,
+        )
     }
 
     #[view]
-    public fun get_schedule_tge_bps(): u64 acquires VestingContract {
-        let schedule = get_vesting_schedule();
-        schedule.tge_bps
+    public fun is_vesting_started(): bool acquires VestingContract {
+        let vesting_addr = get_vesting_address();
+        let vesting = borrow_global<VestingContract>(vesting_addr);
+        vesting.start_vesting == 1
     }
 
     #[view]
-    public fun get_schedule_linear_vesting_months(): u64 acquires VestingContract {
-        let schedule = get_vesting_schedule();
-        schedule.linear_vesting_months
+    /// Returns two vectors: one containing all whitelisted user addresses and another containing their corresponding token amounts
+    public fun get_whitelisted_users(): (vector<address>, vector<u64>) acquires VestingContract {
+        let vesting_addr = get_vesting_address();
+        let vesting = borrow_global<VestingContract>(vesting_addr);
+        
+        let user_addresses = simple_map::keys(&vesting.whitelisted_users);
+        let token_amounts = vector::empty<u64>();
+        
+        let i = 0;
+        let len = vector::length(&user_addresses);
+        while (i < len) {
+            let user_addr = *vector::borrow(&user_addresses, i);
+            let user_info = simple_map::borrow(&vesting.whitelisted_users, &user_addr);
+            vector::push_back(&mut token_amounts, user_info.total_amount);
+            i = i + 1;
+        };
+        
+        (user_addresses, token_amounts)
     }
 
     #[view]
-    public fun get_schedule_start_timestamp(): u64 acquires VestingContract {
-        let schedule = get_vesting_schedule();
-        schedule.start_timestamp
+    public fun get_amount_need_deposit(): u64 acquires VestingContract {
+        let vesting_addr = get_vesting_address();
+        let vesting = borrow_global<VestingContract>(vesting_addr);
+        
+        if (!vesting.is_asset_configured) {
+            return 0
+        };
+        
+        let total_whitelisted = get_total_whitelisted_amount(vesting);
+        let total_deposited = vesting.token_balance;
+        if (total_deposited >= total_whitelisted) {
+            return 0
+        };
+        total_whitelisted - total_deposited
+    }
+
+    #[test_only]
+    /// Helper function to setup a test environment and return common test values
+    public fun initialize_for_test(creator: &signer) {
+        init_module(creator);
     }
 }

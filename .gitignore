@@ -1,3 +1,4 @@
 .aptos/
 build/
 examples/
+sources/whitelist_users.move
