@@ -39,14 +39,10 @@ module TeviVesting::Base {
     /// Errors
     const ENOT_ADMIN: u64 = 1;
     const ENOT_WHITELISTED: u64 = 2;
-    const EVESTING_NOT_STARTED: u64 = 3;
-    const EVESTING_ALREADY_CLAIMED: u64 = 4;
     const EVESTING_AMOUNT_TOO_HIGH: u64 = 5;
-    const EVESTING_CLIFF_NOT_PASSED: u64 = 6;
     const EVESTING_SCHEDULE_INVALID: u64 = 7;
     const EVESTING_ZERO_AMOUNT: u64 = 8;
     const EINSUFFICIENT_BALANCE: u64 = 9;
-    const EVESTING_ALREADY_INITIALIZED: u64 = 10;
     const EVESTING_ALREADY_STARTED: u64 = 11;
     const EASSET_TYPE_NOT_CONFIGURED: u64 = 12;
 
