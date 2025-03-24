@@ -319,7 +319,7 @@ module TeviVesting::Base {
         claimed_amount: u64,
         current_time: u64,
     ): u64 {
-        if (schedule.start_timestamp == 0 || current_time < schedule.start_timestamp) {
+        if (schedule.start_timestamp == 0 || current_time <= schedule.start_timestamp) {
             return 0
         };
 
@@ -404,7 +404,7 @@ module TeviVesting::Base {
         let current_time = timestamp::now_seconds();
         let first_unlock_time = schedule.start_timestamp + (schedule.cliff_months * schedule.seconds_per_month);
 
-        if (current_time < first_unlock_time) {
+        if (current_time <= first_unlock_time) {
             return first_unlock_time
         };
         
