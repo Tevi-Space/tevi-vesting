@@ -421,6 +421,14 @@ module TeviVesting::Base {
         let monthly_amount = (remaining_amount as u128) / (schedule.linear_vesting_months as u128);
         let linear_amount = monthly_amount * (vesting_months as u128);
 
+        // Check if this is the last vesting period and add any remaining tokens due to integer division
+        if (vesting_months == schedule.linear_vesting_months) {
+            // Calculate exact amount from integer division to ensure all tokens are distributed
+            let distributed = (monthly_amount * (schedule.linear_vesting_months as u128));
+            let remainder = (remaining_amount as u128) - distributed;
+            linear_amount = linear_amount + remainder;
+        };
+
         let total_claimable = tge_amount + linear_amount;
         ((total_claimable as u64) - claimed_amount)
     }
@@ -480,7 +488,7 @@ module TeviVesting::Base {
         let current_time = timestamp::now_seconds();
         let first_unlock_time = schedule.start_timestamp + (schedule.cliff_months * schedule.seconds_per_month);
 
-        if (current_time <= first_unlock_time) {
+        if (current_time < first_unlock_time) {
             return first_unlock_time
         };
         

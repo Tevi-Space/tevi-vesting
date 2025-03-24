@@ -2,8 +2,8 @@
 module TeviVesting::BaseTests {
     use std::signer;
     use std::vector;
-    // use std::string;
-    // use aptos_std::debug;
+    use std::string;
+    use aptos_std::debug;
     
     use aptos_framework::object;
     use aptos_framework::primary_fungible_store;
@@ -610,7 +610,12 @@ module TeviVesting::BaseTests {
         
         // At cliff end, next unlock should be one month later
         next_unlock = Base::get_next_unlock_time();
-        assert!(next_unlock == START_TIMESTAMP + (SECONDS_PER_MONTH * (CLIFF_MONTHS + 1)), 8);
+        debug::print(&string::utf8(b"next_unlock"));
+        debug::print(&next_unlock);
+        let cliff_end = START_TIMESTAMP + (SECONDS_PER_MONTH * (CLIFF_MONTHS + 1));
+        debug::print(&string::utf8(b"cliff_end"));
+        debug::print(&cliff_end);
+        assert!(next_unlock == cliff_end, 8);
         
         // Fast forward one month into linear vesting period
         timestamp::fast_forward_seconds(SECONDS_PER_MONTH);
@@ -800,5 +805,106 @@ module TeviVesting::BaseTests {
         };
         
         assert!(found_updated, 10);
+    }
+
+    #[test(admin = @TeviVesting, aptos = @0x1, user = @0x456)]
+    public fun test_integer_division_remainder(admin: &signer, aptos: &signer, user: &signer) {
+        // Set up the test environment
+        setup_test_environment(admin, aptos);
+        
+        // Set the timestamp to match our START_TIMESTAMP
+        timestamp::fast_forward_seconds(START_TIMESTAMP);
+        
+        // Configure vesting with a non-standard linear vesting period (3 months)
+        // This should create an integer division scenario
+        let non_standard_linear_months = 3; // Intentionally small to create remainder
+        
+        // Configure with custom vesting period
+        let asset_type = TeviCoin::get_metadata();
+        let asset_addr = object::object_address(&asset_type);
+        
+        Base::configure_vesting(
+            admin, 
+            CLIFF_MONTHS, 
+            TGE_BPS, 
+            non_standard_linear_months, 
+            asset_addr,
+            START_TIMESTAMP,
+            SECONDS_PER_MONTH
+        );
+        
+        // Deposit tokens
+        // Use an amount that will create a remainder when divided by linear_vesting_months
+        // For example: 100 tokens, 10% TGE = 10 tokens, 90 tokens remain for linear vesting
+        // 90 tokens / 3 months = 30 tokens per month, but using integer division
+        let token_amount = 100 * TEVI_DECIMALS; // 100 TEVI for simplicity
+        mint_and_deposit(admin, token_amount);
+        
+        // Whitelist the user
+        let user_addr = signer::address_of(user);
+        let users = vector::singleton(user_addr);
+        let amounts = vector::singleton(token_amount);
+        
+        Base::batch_whitelist_users(admin, users, amounts);
+        
+        // Start vesting
+        Base::start_vesting(admin);
+        
+        // Fast forward past cliff period
+        timestamp::fast_forward_seconds(SECONDS_PER_MONTH * CLIFF_MONTHS);
+        
+        // Claim TGE portion (10%)
+        let tge_amount = token_amount * TGE_BPS / BASIS_POINTS_DENOMINATOR; // 10% of total
+        Base::claim(user);
+        
+        // Fast forward through linear vesting period (1 month at a time)
+        // First month of linear vesting
+        timestamp::fast_forward_seconds(SECONDS_PER_MONTH);
+        
+        // Remaining amount after TGE should be 90 TEVI
+        // Monthly linear amount should be 90 / 3 = 30 TEVI
+        let expected_first_month = (token_amount - tge_amount) / non_standard_linear_months;
+        let (_, _, claimable, _) = Base::get_vesting_info(user_addr);
+        assert!(claimable == expected_first_month, 1);
+        
+        // Claim first month
+        Base::claim(user);
+        
+        // Verify total claimed so far (TGE + first month)
+        let (_, claimed_after_first, _, _) = Base::get_vesting_info(user_addr);
+        assert!(claimed_after_first == tge_amount + expected_first_month, 2);
+        
+        // Fast forward to second month
+        timestamp::fast_forward_seconds(SECONDS_PER_MONTH);
+        
+        // Claim second month
+        Base::claim(user);
+        
+        // Verify total claimed so far (TGE + first month + second month)
+        let (_, claimed_after_second, _, _) = Base::get_vesting_info(user_addr);
+        assert!(claimed_after_second == tge_amount + (expected_first_month * 2), 3);
+        
+        // Fast forward to final month
+        timestamp::fast_forward_seconds(SECONDS_PER_MONTH);
+        
+        // Check claimable amount for the final month
+        // This should include any remainder from integer division
+        let (_, claimed_before_final, claimable_final, _) = Base::get_vesting_info(user_addr);
+        let remaining_tokens = token_amount - claimed_before_final;
+        assert!(claimable_final == remaining_tokens, 4);
+        
+        // Claim final month
+        Base::claim(user);
+        
+        // Verify all tokens have been claimed
+        let (total_final, claimed_final, claimable_after_final, _) = Base::get_vesting_info(user_addr);
+        assert!(total_final == token_amount, 5);
+        assert!(claimed_final == token_amount, 6); // All tokens should be claimed
+        assert!(claimable_after_final == 0, 7);
+        
+        // Verify token balance in user's wallet matches the total amount
+        let asset_type = TeviCoin::get_metadata();
+        let final_balance = primary_fungible_store::balance(user_addr, asset_type);
+        assert!(final_balance == token_amount, 8);
     }
 } 
