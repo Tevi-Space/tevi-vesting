@@ -30,7 +30,7 @@ module TeviVesting::Base {
     // use aptos_std::debug;
     
     use aptos_framework::timestamp;
-    // use aptos_framework::event::{Self, EventHandle};
+    use aptos_framework::event;
     use aptos_framework::primary_fungible_store;
     use aptos_framework::object::{Self, ExtendRef, Object};
     use aptos_framework::fungible_asset::Metadata;
@@ -76,6 +76,42 @@ module TeviVesting::Base {
         start_vesting: u64, // flag to control vesting start
         asset_type: Option<Object<Metadata>>, // Asset to be used for vesting
         is_asset_configured: bool, // Flag to indicate if asset has been configured
+    }
+
+    #[event]
+    struct ConfigureVestingEvent has drop, store {
+        cliff_months: u64,
+        tge_bps: u64,
+        linear_vesting_months: u64,
+        asset_type: address,
+        start_timestamp: u64,
+        seconds_per_month: u64,
+    }
+
+    #[event]
+    struct DepositTokensEvent has drop, store {
+        amount: u64,
+        admin: address,
+    }
+
+    #[event]
+    struct StartVestingEvent has drop, store {
+        admin: address,
+        timestamp: u64,
+    }
+
+    #[event]
+    struct WhitelistUsersEvent has drop, store {
+        users: vector<address>,
+        amounts: vector<u64>,
+        admin: address,
+    }
+    
+    #[event]
+    struct ClaimEvent has drop, store {
+        user: address,
+        amount: u64,
+        timestamp: u64,
     }
 
     /// Get the signer for the vesting contract
@@ -193,6 +229,16 @@ module TeviVesting::Base {
             signer::address_of(&vesting_signer),
             new_asset_type
         );
+        
+        // Emit configure event
+        event::emit(ConfigureVestingEvent {
+            cliff_months,
+            tge_bps,
+            linear_vesting_months,
+            asset_type,
+            start_timestamp,
+            seconds_per_month,
+        });
     }
 
     /// Returns the active asset metadata object
@@ -208,6 +254,7 @@ module TeviVesting::Base {
         // Use authorized_borrow_contract_mut instead of assert_is_admin
         let vesting = authorized_borrow_contract_mut(admin);
         let vesting_addr = get_vesting_address();
+        let admin_addr = signer::address_of(admin);
         
         assert!(amount > 0, error::invalid_argument(EVESTING_ZERO_AMOUNT));
         assert!(vesting.is_asset_configured, error::not_found(EASSET_TYPE_NOT_CONFIGURED));
@@ -216,11 +263,19 @@ module TeviVesting::Base {
         let metadata = *option::borrow(&vesting.asset_type);
         primary_fungible_store::transfer(admin, metadata, vesting_addr, amount);
         vesting.token_balance = vesting.token_balance + amount;
+        
+        // Emit deposit event
+        event::emit(DepositTokensEvent {
+            amount,
+            admin: admin_addr,
+        });
     }
 
     /// Function to start vesting by setting the start_vesting flag
     public entry fun start_vesting(admin: &signer) acquires VestingContract {
         let vesting = authorized_borrow_contract_mut(admin);
+        let admin_addr = signer::address_of(admin);
+        
         // Ensure vesting has not started
         assert!(vesting.start_vesting == 0, error::invalid_state(EVESTING_ALREADY_STARTED));
         assert!(vesting.is_asset_configured, error::not_found(EASSET_TYPE_NOT_CONFIGURED));
@@ -229,6 +284,12 @@ module TeviVesting::Base {
         let total_whitelisted = get_total_whitelisted_amount(vesting);
         assert!(vesting.token_balance >= total_whitelisted, error::invalid_state(EINSUFFICIENT_BALANCE));
         vesting.start_vesting = 1;
+        
+        // Emit start vesting event
+        event::emit(StartVestingEvent {
+            admin: admin_addr,
+            timestamp: timestamp::now_seconds(),
+        });
     }
 
     /// Add multiple users to the whitelist in a single transaction
@@ -238,6 +299,7 @@ module TeviVesting::Base {
         amounts: vector<u64>,
     ) acquires VestingContract {
         let vesting = authorized_borrow_contract_mut(admin);
+        let admin_addr = signer::address_of(admin);
 
         // Validate vectors have same length
         let users_len = vector::length(&users);
@@ -266,6 +328,13 @@ module TeviVesting::Base {
             primary_fungible_store::ensure_primary_store_exists(user, metadata);
             i = i + 1;
         };
+        
+        // Emit whitelist users event
+        event::emit(WhitelistUsersEvent {
+            users,
+            amounts,
+            admin: admin_addr,
+        });
     }
 
     /// Claim vested tokens
@@ -310,6 +379,13 @@ module TeviVesting::Base {
             user_addr,
             claimable
         );
+        
+        // Emit claim event
+        event::emit(ClaimEvent {
+            user: user_addr,
+            amount: claimable,
+            timestamp: current_time,
+        });
     }
 
     /// Calculate the amount of tokens that can be claimed
