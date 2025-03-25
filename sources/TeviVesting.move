@@ -14,8 +14,8 @@ This module implements a configurable vesting contract that allows:
 
 The vesting schedule consists of:
 1. Initial release: Optional percentage of tokens released at TGE (basis points)
-2. Cliff period: Time period (in months) during which no additional tokens vest
-3. Linear vesting: Period (in months) during which remaining tokens vest linearly
+2. Cliff period: Time period (in rounds) during which no additional tokens vest
+3. Linear vesting: Period (in rounds) during which remaining tokens vest linearly
 
 Users can only claim tokens according to the vesting schedule, and
 the admin must whitelist users and deposit sufficient tokens before
@@ -47,17 +47,17 @@ module TeviVesting::Base {
     const EASSET_TYPE_NOT_CONFIGURED: u64 = 12;
 
     /// Constants for time calculations (in seconds)
-    const SECONDS_PER_MONTH: u64 = 2592000; // 30 days (default value)
+    const SECONDS_PER_ROUND: u64 = 2592000; // 30 days (default value)
     const VESTING_OBJECT_SEED: vector<u8> = b"TEVI_VESTING";
     const BASIS_POINTS_DENOMINATOR: u64 = 10000;
 
     /// Vesting schedule configuration
     struct VestingSchedule has store, copy, drop {
-        cliff_months: u64,
+        cliff_rounds: u64,
         tge_bps: u64, // Basis points (1/10000)
-        linear_vesting_months: u64,
+        linear_vesting_rounds: u64,
         start_timestamp: u64,
-        seconds_per_month: u64, // Added configurable seconds per month
+        seconds_per_round: u64, // Added configurable seconds per round
     }
 
     /// User vesting information
@@ -81,12 +81,12 @@ module TeviVesting::Base {
 
     #[event]
     struct ConfigureVestingEvent has drop, store {
-        cliff_months: u64,
+        cliff_rounds: u64,
         tge_bps: u64,
-        linear_vesting_months: u64,
+        linear_vesting_rounds: u64,
         asset_type: address,
         start_timestamp: u64,
-        seconds_per_month: u64,
+        seconds_per_round: u64,
     }
 
     #[event]
@@ -180,11 +180,11 @@ module TeviVesting::Base {
         let vesting_signer = object::generate_signer(constructor_ref);
         // Initialize the VestingContract with default values
         let default_schedule = VestingSchedule {
-            cliff_months: 0,
+            cliff_rounds: 0,
             tge_bps: 0,
-            linear_vesting_months: 0,
+            linear_vesting_rounds: 0,
             start_timestamp: 0,
-            seconds_per_month: SECONDS_PER_MONTH, // Use the default value
+            seconds_per_round: SECONDS_PER_ROUND, // Use the default value
         };
         
         // Create an empty SimpleMap for whitelisted users
@@ -205,12 +205,12 @@ module TeviVesting::Base {
     /// Configure vesting parameters
     public entry fun configure_vesting(
         admin: &signer, 
-        cliff_months: u64, 
+        cliff_rounds: u64, 
         tge_bps: u64, 
-        linear_vesting_months: u64,
+        linear_vesting_rounds: u64,
         asset_type: address,
         start_timestamp: u64,
-        seconds_per_month: u64,
+        seconds_per_round: u64,
     ) acquires VestingContract {
         let vesting_signer = get_vesting_signer();
         let vesting = authorized_borrow_contract_mut(admin);
@@ -220,18 +220,18 @@ module TeviVesting::Base {
         
         // Validate parameters
         assert!(tge_bps <= BASIS_POINTS_DENOMINATOR, error::invalid_argument(EVESTING_SCHEDULE_INVALID));
-        assert!(cliff_months > 0, error::invalid_argument(EVESTING_SCHEDULE_INVALID));
-        assert!(linear_vesting_months > 0, error::invalid_argument(EVESTING_SCHEDULE_INVALID));
-        assert!(seconds_per_month > 0, error::invalid_argument(EVESTING_SCHEDULE_INVALID));
+        assert!(cliff_rounds > 0, error::invalid_argument(EVESTING_SCHEDULE_INVALID));
+        assert!(linear_vesting_rounds > 0, error::invalid_argument(EVESTING_SCHEDULE_INVALID));
+        assert!(seconds_per_round > 0, error::invalid_argument(EVESTING_SCHEDULE_INVALID));
         assert!(start_timestamp > 0, error::invalid_argument(EVESTING_SCHEDULE_INVALID));
 
         // Update schedule
         vesting.schedule = VestingSchedule {
-            cliff_months,
+            cliff_rounds,
             tge_bps,
-            linear_vesting_months,
+            linear_vesting_rounds,
             start_timestamp,
-            seconds_per_month,
+            seconds_per_round,
         };
 
         // Update asset type
@@ -247,12 +247,12 @@ module TeviVesting::Base {
         
         // Emit configure event
         event::emit(ConfigureVestingEvent {
-            cliff_months,
+            cliff_rounds,
             tge_bps,
-            linear_vesting_months,
+            linear_vesting_rounds,
             asset_type,
             start_timestamp,
-            seconds_per_month,
+            seconds_per_round,
         });
     }
 
@@ -420,10 +420,10 @@ module TeviVesting::Base {
         };
 
         let time_passed = current_time - schedule.start_timestamp;
-        let months_passed = time_passed / schedule.seconds_per_month; // Use the configurable seconds_per_month
+        let rounds_passed = time_passed / schedule.seconds_per_round; // Use the configurable seconds_per_round
 
         // Check if cliff period has passed
-        if (months_passed < schedule.cliff_months) {
+        if (rounds_passed < schedule.cliff_rounds) {
             return 0
         };
 
@@ -432,19 +432,19 @@ module TeviVesting::Base {
         let remaining_amount = total_amount - (tge_amount as u64);
 
         // Calculate linear vesting amount
-        let vesting_months = if (months_passed > schedule.cliff_months + schedule.linear_vesting_months) {
-            schedule.linear_vesting_months
+        let vesting_rounds = if (rounds_passed > schedule.cliff_rounds + schedule.linear_vesting_rounds) {
+            schedule.linear_vesting_rounds
         } else {
-            months_passed - schedule.cliff_months
+            rounds_passed - schedule.cliff_rounds
         };
 
-        let monthly_amount = (remaining_amount as u128) / (schedule.linear_vesting_months as u128);
-        let linear_amount = monthly_amount * (vesting_months as u128);
+        let round_amount = (remaining_amount as u128) / (schedule.linear_vesting_rounds as u128);
+        let linear_amount = round_amount * (vesting_rounds as u128);
 
         // Check if this is the last vesting period and add any remaining tokens due to integer division
-        if (vesting_months == schedule.linear_vesting_months) {
+        if (vesting_rounds == schedule.linear_vesting_rounds) {
             // Calculate exact amount from integer division to ensure all tokens are distributed
-            let distributed = (monthly_amount * (schedule.linear_vesting_months as u128));
+            let distributed = (round_amount * (schedule.linear_vesting_rounds as u128));
             let remainder = (remaining_amount as u128) - distributed;
             linear_amount = linear_amount + remainder;
         };
@@ -506,7 +506,7 @@ module TeviVesting::Base {
         
         let schedule = vesting.schedule;
         let current_time = timestamp::now_seconds();
-        let first_unlock_time = schedule.start_timestamp + (schedule.cliff_months * schedule.seconds_per_month);
+        let first_unlock_time = schedule.start_timestamp + (schedule.cliff_rounds * schedule.seconds_per_round);
 
         if (current_time < first_unlock_time) {
             return first_unlock_time
@@ -514,18 +514,18 @@ module TeviVesting::Base {
         
         // Calculate time passed since vesting started
         let time_passed = current_time - schedule.start_timestamp;
-        let months_passed = time_passed / schedule.seconds_per_month;
+        let rounds_passed = time_passed / schedule.seconds_per_round;
         
         // If we're before the cliff, next unlock is at cliff end
-        if (months_passed < schedule.cliff_months) {
+        if (rounds_passed < schedule.cliff_rounds) {
             return first_unlock_time
         };
         
         // If we've passed the cliff but are still in the linear vesting period
-        if (months_passed < schedule.cliff_months + schedule.linear_vesting_months) {
-            // Calculate the next month's unlock time
-            let next_month = months_passed + 1;
-            return schedule.start_timestamp + (next_month * schedule.seconds_per_month)
+        if (rounds_passed < schedule.cliff_rounds + schedule.linear_vesting_rounds) {
+            // Calculate the next round's unlock time
+            let next_round = rounds_passed + 1;
+            return schedule.start_timestamp + (next_round * schedule.seconds_per_round)
         };
         
         // If we've passed the entire vesting period, there's no next unlock
@@ -557,13 +557,13 @@ module TeviVesting::Base {
         };
         
         (
-            vesting.schedule.cliff_months,
+            vesting.schedule.cliff_rounds,
             vesting.schedule.tge_bps,
-            vesting.schedule.linear_vesting_months,
+            vesting.schedule.linear_vesting_rounds,
             asset_address,
             vesting.is_asset_configured,
             vesting.start_vesting == 1,
-            vesting.schedule.seconds_per_month,
+            vesting.schedule.seconds_per_round,
         )
     }
 
