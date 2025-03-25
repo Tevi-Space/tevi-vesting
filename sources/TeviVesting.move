@@ -45,6 +45,7 @@ module TeviVesting::Base {
     const EINSUFFICIENT_BALANCE: u64 = 9;
     const EVESTING_ALREADY_STARTED: u64 = 11;
     const EASSET_TYPE_NOT_CONFIGURED: u64 = 12;
+    const EACCOUNT_PAUSED: u64 = 13;
 
     /// Constants for time calculations (in seconds)
     const SECONDS_PER_ROUND: u64 = 2592000; // 30 days (default value)
@@ -366,7 +367,7 @@ module TeviVesting::Base {
             
             // Check if user is paused before allowing claim
             let user_info = simple_map::borrow(&vesting.whitelisted_users, &user_addr);
-            assert!(!user_info.is_pause, error::permission_denied(ENOT_WHITELISTED));
+            assert!(!user_info.is_pause, error::permission_denied(EACCOUNT_PAUSED));
         };
         
         let vesting_signer = get_vesting_signer();

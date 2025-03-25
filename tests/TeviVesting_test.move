@@ -983,7 +983,7 @@ module TeviVesting::BaseTests {
     }
     
     #[test(admin = @TeviVesting, aptos = @0x1, user = @0x456)]
-    #[expected_failure(abort_code = 327682, location = TeviVesting::Base)] // permission_denied(ENOT_WHITELISTED)
+    #[expected_failure(abort_code = 327693, location = TeviVesting::Base)] // permission_denied(ENOT_WHITELISTED)
     public fun test_cannot_claim_while_paused(admin: &signer, aptos: &signer, user: &signer) {
         // Set up the test environment
         setup_test_environment(admin, aptos);
@@ -1015,7 +1015,7 @@ module TeviVesting::BaseTests {
         // Pause the user
         Base::set_user_pause_status(admin, user_addr, true);
         
-        // Try to claim tokens while paused - should fail with ENOT_WHITELISTED error
+        // Try to claim tokens while paused - should fail with EACCOUNT_PAUSED error
         Base::claim(user);
     }
     
