@@ -87,12 +87,14 @@ module TeviVesting::Base {
         asset_type: address,
         start_timestamp: u64,
         seconds_per_round: u64,
+        timestamp: u64,
     }
 
     #[event]
     struct DepositTokensEvent has drop, store {
         amount: u64,
         admin: address,
+        timestamp: u64,
     }
 
     #[event]
@@ -106,6 +108,7 @@ module TeviVesting::Base {
         users: vector<address>,
         amounts: vector<u64>,
         admin: address,
+        timestamp: u64,
     }
     
     #[event]
@@ -116,16 +119,10 @@ module TeviVesting::Base {
     }
 
     #[event]
-    struct PauseUserEvent has drop, store {
-        user: address,
+    struct SetUserPauseEvent has drop, store {
         admin: address,
-        timestamp: u64,
-    }
-
-    #[event]
-    struct UnpauseUserEvent has drop, store {
         user: address,
-        admin: address,
+        is_pause: bool,
         timestamp: u64,
     }
 
@@ -253,6 +250,7 @@ module TeviVesting::Base {
             asset_type,
             start_timestamp,
             seconds_per_round,
+            timestamp: timestamp::now_seconds(),
         });
     }
 
@@ -283,6 +281,7 @@ module TeviVesting::Base {
         event::emit(DepositTokensEvent {
             amount,
             admin: admin_addr,
+            timestamp: timestamp::now_seconds(),
         });
     }
 
@@ -350,6 +349,7 @@ module TeviVesting::Base {
             users,
             amounts,
             admin: admin_addr,
+            timestamp: timestamp::now_seconds(),
         });
     }
 
@@ -404,7 +404,7 @@ module TeviVesting::Base {
         event::emit(ClaimEvent {
             user: user_addr,
             amount: claimable,
-            timestamp: current_time,
+            timestamp: timestamp::now_seconds(),
         });
     }
 
@@ -623,20 +623,12 @@ module TeviVesting::Base {
         let user_info = simple_map::borrow_mut(&mut vesting.whitelisted_users, &user);
         user_info.is_pause = is_pause;
         
-        // Emit appropriate event based on the pause status
-        if (is_pause) {
-            event::emit(PauseUserEvent {
-                user,
-                admin: admin_addr,
-                timestamp: timestamp::now_seconds(),
-            });
-        } else {
-            event::emit(UnpauseUserEvent {
-                user,
-                admin: admin_addr,
-                timestamp: timestamp::now_seconds(),
-            });
-        };
+        event::emit(SetUserPauseEvent {
+            admin: admin_addr,
+            user,
+            is_pause,
+            timestamp: timestamp::now_seconds(),
+        });
     }
 
     #[test_only]
