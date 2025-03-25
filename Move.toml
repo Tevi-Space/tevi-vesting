@@ -7,7 +7,6 @@ authors = []
 [addresses]
 TeviVesting = "_"
 TeviCoin = "_"
-TeviWallet = "_"
 
 [dev-addresses]
 
