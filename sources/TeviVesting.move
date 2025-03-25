@@ -65,6 +65,7 @@ module TeviVesting::Base {
         total_amount: u64,
         claimed_amount: u64,
         last_claim_timestamp: u64,
+        is_pause: bool, // New attribute to control pausing of individual users
     }
 
     /// Main vesting contract storage
@@ -111,6 +112,20 @@ module TeviVesting::Base {
     struct ClaimEvent has drop, store {
         user: address,
         amount: u64,
+        timestamp: u64,
+    }
+
+    #[event]
+    struct PauseUserEvent has drop, store {
+        user: address,
+        admin: address,
+        timestamp: u64,
+    }
+
+    #[event]
+    struct UnpauseUserEvent has drop, store {
+        user: address,
+        admin: address,
         timestamp: u64,
     }
 
@@ -316,6 +331,7 @@ module TeviVesting::Base {
                 total_amount: amount,
                 claimed_amount: 0,
                 last_claim_timestamp: 0,
+                is_pause: false, // Default value is false
             };
 
             if (simple_map::contains_key(&vesting.whitelisted_users, &user)) {
@@ -347,6 +363,10 @@ module TeviVesting::Base {
             assert!(vesting.is_asset_configured, error::not_found(EASSET_TYPE_NOT_CONFIGURED));
             assert!(simple_map::contains_key(&vesting.whitelisted_users, &user_addr), 
                 error::permission_denied(ENOT_WHITELISTED));
+            
+            // Check if user is paused before allowing claim
+            let user_info = simple_map::borrow(&vesting.whitelisted_users, &user_addr);
+            assert!(!user_info.is_pause, error::permission_denied(ENOT_WHITELISTED));
         };
         
         let vesting_signer = get_vesting_signer();
@@ -449,11 +469,11 @@ module TeviVesting::Base {
     }
 
     #[view]
-    public fun get_vesting_info(user: address): (u64, u64, u64, u64) acquires VestingContract {
+    public fun get_vesting_info(user: address): (u64, u64, u64, u64, bool) acquires VestingContract {
         let vesting_addr = get_vesting_address();
         let vesting = borrow_global<VestingContract>(vesting_addr);
         if (!vesting.is_asset_configured || !simple_map::contains_key(&vesting.whitelisted_users, &user)) {
-            return (0, 0, 0, 0)
+            return (0, 0, 0, 0, false)
         };
         
         let user_info = simple_map::borrow(&vesting.whitelisted_users, &user);
@@ -466,7 +486,7 @@ module TeviVesting::Base {
             current_time
         );
         
-        (user_info.total_amount, user_info.claimed_amount, claimable, user_info.last_claim_timestamp)
+        (user_info.total_amount, user_info.claimed_amount, claimable, user_info.last_claim_timestamp, user_info.is_pause)
     }
 
     #[view]
@@ -590,6 +610,33 @@ module TeviVesting::Base {
             return 0
         };
         total_whitelisted - total_deposited
+    }
+
+    /// Set a user's pause status (true to pause, false to unpause)
+    public entry fun set_user_pause_status(admin: &signer, user: address, is_pause: bool) acquires VestingContract {
+        let vesting = authorized_borrow_contract_mut(admin);
+        let admin_addr = signer::address_of(admin);
+        
+        assert!(simple_map::contains_key(&vesting.whitelisted_users, &user), 
+            error::permission_denied(ENOT_WHITELISTED));
+        
+        let user_info = simple_map::borrow_mut(&mut vesting.whitelisted_users, &user);
+        user_info.is_pause = is_pause;
+        
+        // Emit appropriate event based on the pause status
+        if (is_pause) {
+            event::emit(PauseUserEvent {
+                user,
+                admin: admin_addr,
+                timestamp: timestamp::now_seconds(),
+            });
+        } else {
+            event::emit(UnpauseUserEvent {
+                user,
+                admin: admin_addr,
+                timestamp: timestamp::now_seconds(),
+            });
+        };
     }
 
     #[test_only]
